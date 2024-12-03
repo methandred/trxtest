@@ -1,0 +1,146 @@
+const { TronWeb } = require('tronweb');
+const https = require('https');
+
+// Инициализация TronWeb для работы с тестовой сетью Shasta
+const tronWeb = new TronWeb({
+    fullHost: 'https://api.shasta.trongrid.io',
+    privateKey: '' // Приватный ключ главного кошелька
+});
+
+const mainWalletAddress = ''; // Основной кошелёк
+
+// Функция задержки
+function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Функция создания субкошелька
+async function createSubWallet() {
+    try {
+        // Создаём новый субкошелёк
+        const newWallet = await tronWeb.createAccount();
+        const subWalletAddress = newWallet.address.base58;
+        const subWalletPrivateKey = newWallet.privateKey;
+
+        console.log('Субкошелек создан:');
+        console.log('Адрес:', subWalletAddress);
+        console.log('Приватный ключ:', subWalletPrivateKey);
+
+        // Делаем задержку для синхронизации сети
+        await delay(15000);
+
+        // Активируем субкошелёк
+        await activateSubWallet(subWalletAddress);
+
+        // Переводим 111 TRX на субкошелёк
+        await transferFunds(subWalletAddress, 111);
+
+        // Настроим разрешения для субкошелька
+        await setPermissions(subWalletAddress);
+
+        return newWallet;
+    } catch (error) {
+        console.error('Ошибка при создании субкошелька:', error);
+    }
+}
+
+// Функция активации субкошелька
+async function activateSubWallet(subWalletAddress) {
+    try {
+        const amount = 1; // Перевод 1 TRX для активации
+        const transaction = await tronWeb.transactionBuilder.sendTrx(subWalletAddress, amount, mainWalletAddress);
+        const signedTx = await tronWeb.trx.sign(transaction);
+        const result = await tronWeb.trx.sendRawTransaction(signedTx);
+        console.log('Субкошелек активирован:', result);
+    } catch (error) {
+        console.error('Ошибка при активации субкошелька:', error);
+    }
+}
+
+// Функция перевода средств
+async function transferFunds(toAddress, amount) {
+    try {
+        const transaction = await tronWeb.transactionBuilder.sendTrx(toAddress, amount * 1e6, mainWalletAddress); // Умножаем на 1e6, так как TRX указывается в SUN
+        const signedTx = await tronWeb.trx.sign(transaction);
+        const result = await tronWeb.trx.sendRawTransaction(signedTx);
+        console.log(`${amount} TRX переведено на адрес ${toAddress}:`, result);
+    } catch (error) {
+        console.error('Ошибка при переводе средств:', error);
+    }
+}
+
+// Функция настройки разрешений
+async function setPermissions(subWalletAddress) {
+    try {
+        const permissions = {
+            owner_address: mainWalletAddress,
+            actives: [
+                {
+                    type: 2,
+                    permission_name: 'active0',
+                    threshold: 2,
+                    operations: '7fff1fc0037e0000000000000000000000000000000000000000000000000000',
+                    keys: [
+                        { address: mainWalletAddress, weight: 1 },
+                        { address: subWalletAddress, weight: 1 }
+                    ]
+                }
+            ],
+            owner: {
+                type: 0,
+                permission_name: 'owner',
+                threshold: 1,
+                keys: [
+                    { address: mainWalletAddress, weight: 1 }
+                ]
+            },
+            visible: true
+        };
+
+        const data = JSON.stringify(permissions);
+
+        const options = {
+            hostname: 'api.shasta.trongrid.io',
+            port: 443,
+            path: '/wallet/accountpermissionupdate',
+            method: 'POST',
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(data)
+            }
+        };
+
+        const req = https.request(options, (res) => {
+            let data = '';
+            res.on('data', (chunk) => {
+                data += chunk;
+            });
+            res.on('end', () => {
+                try {
+                    const result = JSON.parse(data);
+                    if (result.result) {
+                        console.log('Разрешения успешно обновлены');
+                    } else {
+                        console.error('Ошибка при обновлении разрешений:', result);
+                    }
+                } catch (e) {
+                    console.error('Ошибка при обработке ответа:', e);
+                }
+            });
+        });
+
+        req.on('error', (error) => {
+            console.error('Ошибка при отправке запроса:', error);
+        });
+
+        req.write(data);
+        req.end();
+
+    } catch (error) {
+        console.error('Ошибка при настройке разрешений:', error);
+    }
+}
+
+// Запуск создания субкошелька
+createSubWallet();
